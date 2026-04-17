@@ -1,23 +1,16 @@
 from __future__ import annotations
 
 import json
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import sqlite3
 from typing import Any, Dict, List, Optional
 
-from config.settings import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DEFAULT_ADMIN_USER, DEFAULT_ADMIN_PASSWORD
+from config.settings import DB_PATH, DEFAULT_ADMIN_USER, DEFAULT_ADMIN_PASSWORD
 from backend.security import hash_password
 
 
 def get_conn():
-    conn = psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        cursor_factory=RealDictCursor
-    )
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
     return conn
 
 
@@ -27,29 +20,29 @@ def init_db() -> None:
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            username VARCHAR(255) UNIQUE NOT NULL,
-            display_name VARCHAR(255) NOT NULL,
-            role VARCHAR(50) NOT NULL,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            display_name TEXT NOT NULL,
+            role TEXT NOT NULL,
             password_hash TEXT NOT NULL,
-            created_at TIMESTAMP NOT NULL,
-            must_change_password BOOLEAN NOT NULL DEFAULT TRUE
+            created_at DATETIME NOT NULL,
+            must_change_password BOOLEAN NOT NULL DEFAULT 1
         )
         """
     )
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS patients (
-            id SERIAL PRIMARY KEY,
-            patient_id VARCHAR(255) UNIQUE NOT NULL,
-            tracking_token VARCHAR(255) NOT NULL,
-            created_at TIMESTAMP NOT NULL,
-            updated_at TIMESTAMP,
-            source VARCHAR(50) NOT NULL,
-            name VARCHAR(255) NOT NULL,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            patient_id TEXT UNIQUE NOT NULL,
+            tracking_token TEXT NOT NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME,
+            source TEXT NOT NULL,
+            name TEXT NOT NULL,
             age INTEGER,
-            sex VARCHAR(50),
-            pregnancy BOOLEAN NOT NULL DEFAULT FALSE,
+            sex TEXT,
+            pregnancy BOOLEAN NOT NULL DEFAULT 0,
             chief_complaint TEXT,
             symptoms_json TEXT,
             risk_factors_json TEXT,
@@ -60,43 +53,45 @@ def init_db() -> None:
             gps_lat REAL,
             gps_lon REAL,
             gps_accuracy REAL,
-            emergency_phone VARCHAR(50),
+            emergency_phone TEXT,
             triage_json TEXT,
-            status VARCHAR(50) NOT NULL DEFAULT 'NEW',
-            reviewed_by VARCHAR(255),
-            reviewed_at TIMESTAMP,
+            status TEXT NOT NULL DEFAULT 'NEW',
+            reviewed_by TEXT,
+            reviewed_at DATETIME,
             notes TEXT DEFAULT '',
-            video_recommended BOOLEAN NOT NULL DEFAULT FALSE,
-            video_requested BOOLEAN NOT NULL DEFAULT FALSE,
-            video_room_id VARCHAR(255) NOT NULL DEFAULT '',
-            video_status VARCHAR(50) NOT NULL DEFAULT 'NONE',
-            video_requested_at TIMESTAMP,
-            video_joined_at TIMESTAMP
+            video_recommended BOOLEAN NOT NULL DEFAULT 0,
+            video_requested BOOLEAN NOT NULL DEFAULT 0,
+            video_room_id TEXT NOT NULL DEFAULT '',
+            video_status TEXT NOT NULL DEFAULT 'NONE',
+            video_requested_at DATETIME,
+            video_joined_at DATETIME
         )
         """
     )
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS gps_updates (
-            id SERIAL PRIMARY KEY,
-            patient_id VARCHAR(255) NOT NULL,
-            tracking_token VARCHAR(255) NOT NULL,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            patient_id TEXT NOT NULL,
+            tracking_token TEXT NOT NULL,
             lat REAL NOT NULL,
             lon REAL NOT NULL,
             accuracy REAL,
-            updated_at TIMESTAMP NOT NULL
+            created_at DATETIME NOT NULL,
+            FOREIGN KEY (patient_id) REFERENCES patients (patient_id)
         )
         """
     )
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS status_history (
-            id SERIAL PRIMARY KEY,
-            patient_id VARCHAR(255) NOT NULL,
-            status VARCHAR(50) NOT NULL,
-            note TEXT,
-            changed_by VARCHAR(255),
-            changed_at TIMESTAMP NOT NULL
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            patient_id TEXT NOT NULL,
+            old_status TEXT,
+            new_status TEXT NOT NULL,
+            changed_by TEXT,
+            changed_at DATETIME NOT NULL,
+            FOREIGN KEY (patient_id) REFERENCES patients (patient_id)
         )
         """
     )
@@ -125,7 +120,7 @@ def ensure_default_admin() -> None:
         conn.execute(
             """
             INSERT INTO users (username, display_name, role, password_hash, created_at, must_change_password)
-            VALUES (%s, %s, %s, %s, NOW(), TRUE)
+            VALUES (?, ?, ?, ?, datetime('now'), 1)
             """,
             (DEFAULT_ADMIN_USER, "System Administrator", "admin", hash_password(DEFAULT_ADMIN_PASSWORD)),
         )
@@ -146,7 +141,7 @@ def list_users() -> List[Dict[str, Any]]:
 
 def get_user(username: str) -> Optional[Dict[str, Any]]:
     conn = get_conn()
-    row = conn.execute("SELECT * FROM users WHERE username = %s", (username,)).fetchone()
+    row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
     conn.close()
     return row_to_dict(row) if row else None
 
@@ -156,7 +151,7 @@ def create_user(username: str, display_name: str, role: str, password_hash: str,
     conn.execute(
         """
         INSERT INTO users (username, display_name, role, password_hash, created_at, must_change_password)
-        VALUES (%s, %s, %s, %s, NOW(), %s)
+        VALUES (?, ?, ?, ?, datetime('now'), ?)
         """,
         (username, display_name, role, password_hash, must_change_password),
     )
@@ -201,10 +196,10 @@ def list_patients(status: Optional[str] = None, search: Optional[str] = None) ->
         elif status == "IN_REVIEW":
             clauses.append("status = 'IN_REVIEW'")
         else:
-            clauses.append("status = %s")
+            clauses.append("status = ?")
             params.append(status)
     if search:
-        clauses.append("(patient_id LIKE %s OR name LIKE %s OR chief_complaint LIKE %s)")
+        clauses.append("(patient_id LIKE ? OR name LIKE ? OR chief_complaint LIKE ?)")
         s = f"%{search}%"
         params.extend([s, s, s])
     if clauses:
@@ -217,7 +212,7 @@ def list_patients(status: Optional[str] = None, search: Optional[str] = None) ->
 
 def get_patient(patient_id: str) -> Optional[Dict[str, Any]]:
     conn = get_conn()
-    row = conn.execute("SELECT * FROM patients WHERE patient_id = %s", (patient_id,)).fetchone()
+    row = conn.execute("SELECT * FROM patients WHERE patient_id = ?", (patient_id,)).fetchone()
     conn.close()
     return serialize_patient(row) if row else None
 
@@ -232,7 +227,7 @@ def create_patient(record: Dict[str, Any]) -> Dict[str, Any]:
             location_text, gps_lat, gps_lon, gps_accuracy, emergency_phone, triage_json, status,
             reviewed_by, reviewed_at, notes, video_recommended, video_requested, video_room_id, video_status,
             video_requested_at, video_joined_at
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             record["patient_id"], record["tracking_token"], record["created_at"], record.get("updated_at"), record["source"],
@@ -271,13 +266,13 @@ def update_patient_fields(patient_id: str, updates: Dict[str, Any]) -> Optional[
     fields, values = [], []
     for k, v in updates.items():
         if k in allowed:
-            fields.append(f"{k} = %s")
+            fields.append(f"{k} = ?")
             values.append(v)
     if not fields:
         return get_patient(patient_id)
     values.append(patient_id)
     conn = get_conn()
-    conn.execute(f"UPDATE patients SET {', '.join(fields)} WHERE patient_id = %s", values)
+    conn.execute(f"UPDATE patients SET {', '.join(fields)} WHERE patient_id = ?", values)
     conn.commit()
     conn.close()
     return get_patient(patient_id)
@@ -286,7 +281,7 @@ def update_patient_fields(patient_id: str, updates: Dict[str, Any]) -> Optional[
 def record_status_history(patient_id: str, status: str, note: str = "", changed_by: str = "") -> None:
     conn = get_conn()
     conn.execute(
-        "INSERT INTO status_history (patient_id, status, note, changed_by, changed_at) VALUES (%s, %s, %s, %s, NOW())",
+        "INSERT INTO status_history (patient_id, status, note, changed_by, changed_at) VALUES (?, ?, ?, ?, datetime('now'))",
         (patient_id, status, note, changed_by),
     )
     conn.commit()
@@ -296,13 +291,29 @@ def record_status_history(patient_id: str, status: str, note: str = "", changed_
 def delete_patient(patient_id: str) -> bool:
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("DELETE FROM gps_updates WHERE patient_id = %s", (patient_id,))
-    cur.execute("DELETE FROM status_history WHERE patient_id = %s", (patient_id,))
-    cur.execute("DELETE FROM patients WHERE patient_id = %s", (patient_id,))
+    cur.execute("DELETE FROM gps_updates WHERE patient_id = ?", (patient_id,))
+    cur.execute("DELETE FROM status_history WHERE patient_id = ?", (patient_id,))
+    cur.execute("DELETE FROM patients WHERE patient_id = ?", (patient_id,))
     deleted = cur.rowcount > 0
     conn.commit()
     conn.close()
     return deleted
+
+
+def update_gps(patient_id: str, tracking_token: str, lat: float, lon: float, accuracy: Optional[float] = None) -> bool:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE patients SET gps_lat = ?, gps_lon = ?, gps_accuracy = ?, updated_at = datetime('now')
+        WHERE patient_id = ? AND tracking_token = ?
+        """,
+        (lat, lon, accuracy, patient_id, tracking_token),
+    )
+    updated = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
 
 
 def dashboard_summary() -> Dict[str, Any]:
