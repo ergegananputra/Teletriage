@@ -293,23 +293,16 @@ def record_status_history(patient_id: str, status: str, note: str = "", changed_
     conn.close()
 
 
-def update_gps(patient_id: str, tracking_token: str, lat: float, lon: float, accuracy: Optional[float] = None) -> Optional[Dict[str, Any]]:
+def delete_patient(patient_id: str) -> bool:
     conn = get_conn()
-    row = conn.execute("SELECT patient_id FROM patients WHERE patient_id = %s AND tracking_token = %s", (patient_id, tracking_token)).fetchone()
-    if not row:
-        conn.close()
-        return None
-    conn.execute(
-        "INSERT INTO gps_updates (patient_id, tracking_token, lat, lon, accuracy, updated_at) VALUES (%s, %s, %s, %s, %s, NOW())",
-        (patient_id, tracking_token, lat, lon, accuracy),
-    )
-    conn.execute(
-        "UPDATE patients SET gps_lat = %s, gps_lon = %s, gps_accuracy = %s, updated_at = NOW() WHERE patient_id = %s",
-        (lat, lon, accuracy, patient_id),
-    )
+    cur = conn.cursor()
+    cur.execute("DELETE FROM gps_updates WHERE patient_id = %s", (patient_id,))
+    cur.execute("DELETE FROM status_history WHERE patient_id = %s", (patient_id,))
+    cur.execute("DELETE FROM patients WHERE patient_id = %s", (patient_id,))
+    deleted = cur.rowcount > 0
     conn.commit()
     conn.close()
-    return get_patient(patient_id)
+    return deleted
 
 
 def dashboard_summary() -> Dict[str, Any]:

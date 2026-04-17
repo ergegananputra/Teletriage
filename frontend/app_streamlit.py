@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +37,12 @@ def api_post(path: str, payload: Dict[str, Any]) -> Any:
 
 def api_patch(path: str, payload: Dict[str, Any]) -> Any:
     r = requests.patch(f"{API_BASE_URL}{path}", json=payload, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+
+def api_delete(path: str) -> Any:
+    r = requests.delete(f"{API_BASE_URL}{path}", timeout=30)
     r.raise_for_status()
     return r.json()
 
@@ -380,6 +387,21 @@ def render_patient_card(p: Dict[str, Any], context: str) -> None:
             api_patch(f"/patients/{p['patient_id']}", {"status": update_status, "notes": new_note, "reviewed_by": reviewer})
             st.success("Perubahan disimpan.")
             st.rerun()
+
+        # Fitur auto-delete untuk pasien yang sudah ditangani
+        if p.get("status") in {"REVIEWED", "REFERRED", "ARRIVED", "CLOSED"}:
+            st.markdown("---")
+            delete_confirm = st.checkbox("Hapus pasien ini (halaman akan bersih)", key=f"delete_confirm_{unique}")
+            if delete_confirm:
+                delete_btn = st.button("🗑️ Ya, Hapus Sekarang", key=f"delete_btn_{unique}", type="primary")
+                if delete_btn:
+                    try:
+                        api_delete(f"/patients/{p['patient_id']}")
+                        st.success("Pasien berhasil dihapus. Halaman akan refresh.")
+                        time.sleep(1)  # Tunggu sebentar
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Gagal menghapus: {exc}")
 
 
 def admin_page() -> None:
