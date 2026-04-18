@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
 streamlit
+streamlit-autorefresh
 streamlit-folium
 folium
 requests

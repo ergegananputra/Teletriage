@@ -1,4 +1,5 @@
 fastapi
 uvicorn
 pydantic
+pillow
 psycopg2-binary
