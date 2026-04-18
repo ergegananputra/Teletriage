@@ -1,6 +1,15 @@
 # Teletriage Local Version
 
-## Run
+## Run With Docker Compose (Recommended)
+
+```bash
+docker compose up --build
+```
+
+Frontend: `http://127.0.0.1:6501`
+Backend: `http://127.0.0.1:6502`
+
+## Optional Local Run (Without Docker)
 
 ```bash
 pip install -r requirements.txt
