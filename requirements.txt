@@ -8,3 +8,10 @@ pillow
 python-multipart
 psycopg2-binary
 streamlit-autorefresh
+# Enhanced accuracy libraries
+fuzzywuzzy
+scikit-learn
+opencv-python
+numpy
+scipy
+python-Levenshtein
