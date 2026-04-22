@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from text_matching import check_symptom_list, check_medical_terms
 from syndrome_engine import detect_syndromes, SyndromeResult
 from medication_rules import detect_medication_risks, has_high_risk_medications
+from treatment_engine import generate_action_plan
 
 @dataclass
 class TriageResult:
@@ -21,12 +22,15 @@ class TriageResult:
     specialist: str = None
     ambulance_required: bool = False
     medication_warnings: List[str] = None
+    action_plan: Dict[str, Any] = None
     
     def __post_init__(self):
         if self.reasons is None:
             self.reasons = []
         if self.medication_warnings is None:
             self.medication_warnings = []
+        if self.action_plan is None:
+            self.action_plan = {}
 
 def emergency_guardrail(data: Dict[str, Any]) -> bool:
     """
@@ -93,7 +97,8 @@ def triage_engine(data: Dict[str, Any]) -> TriageResult:
             confidence=1.0,
             reasons=["Critical vital signs or symptoms detected"],
             specialist="Emergency Medicine / ICU",
-            ambulance_required=True
+            ambulance_required=True,
+            action_plan=generate_action_plan("Critical Vital Signs")
         )
     
     # Step 2: Detect syndromes
@@ -111,7 +116,8 @@ def triage_engine(data: Dict[str, Any]) -> TriageResult:
                 action="Same-day medical evaluation",
                 confidence=0.4,
                 reasons=["Urgent symptoms but no clear syndrome"],
-                specialist="General Physician / Emergency Medicine"
+                specialist="General Physician / Emergency Medicine",
+                action_plan=generate_action_plan("Unknown Syndrome")
             )
         
         return TriageResult(
@@ -119,7 +125,8 @@ def triage_engine(data: Dict[str, Any]) -> TriageResult:
             action="Outpatient evaluation within 24-48 hours", 
             confidence=0.3,
             reasons=["No clear syndrome or urgent symptoms"],
-            specialist="General Physician"
+            specialist="General Physician",
+            action_plan=generate_action_plan("Unknown Syndrome")
         )
     
     # Step 4: Process top syndrome
@@ -142,7 +149,10 @@ def triage_engine(data: Dict[str, Any]) -> TriageResult:
     # Step 6: Get specialist recommendation
     specialist = map_specialist(top_syndrome.name)
     
-    # Step 7: Check medication risks
+    # Step 7: Generate action plan
+    action_plan = generate_action_plan(top_syndrome.name)
+    
+    # Step 8: Check medication risks
     medications = data.get("medications", [])
     med_risks = detect_medication_risks(medications)
     med_warnings = []
@@ -169,7 +179,8 @@ def triage_engine(data: Dict[str, Any]) -> TriageResult:
         reasons=all_reasons,
         specialist=specialist,
         ambulance_required=ambulance_required,
-        medication_warnings=med_warnings
+        medication_warnings=med_warnings,
+        action_plan=action_plan
     )
 
 def _safe_int(value: Any) -> int:

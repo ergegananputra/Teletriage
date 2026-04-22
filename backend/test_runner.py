@@ -44,6 +44,15 @@ def run_tests():
         triage_match = result.triage_level == case['expected_triage']
         specialist_match = result.specialist == case['expected_specialist']
         
+        # Validate action_plan structure
+        action_plan_valid = (
+            hasattr(result, 'action_plan') and 
+            result.action_plan is not None and
+            'immediate' in result.action_plan and
+            'hospital' in result.action_plan and
+            'specialist' in result.action_plan
+        )
+        
         # Print results
         print(f"Expected Syndrome: {case['expected_syndrome']}")
         print(f"Actual Syndrome:   {result.syndrome}")
@@ -57,6 +66,13 @@ def run_tests():
         print(f"Actual Specialist:   {result.specialist}")
         print(f"Specialist Match:  {'✅' if specialist_match else '❌'}")
         
+        print(f"Action Plan Valid:  {'✅' if action_plan_valid else '❌'}")
+        if action_plan_valid:
+            immediate = result.action_plan.get('immediate', [])
+            specialist_ap = result.action_plan.get('specialist', '')
+            print(f"  Immediate Actions: {', '.join(immediate[:2])}")
+            print(f"  Action Plan Specialist: {specialist_ap}")
+        
         print(f"Confidence: {result.confidence:.2f}")
         print(f"Action: {result.action}")
         print(f"Ambulance: {result.ambulance_required}")
@@ -65,7 +81,7 @@ def run_tests():
             print(f"Med Warnings: {', '.join(result.medication_warnings)}")
         
         # Overall test result
-        test_passed = syndrome_match and triage_match and specialist_match
+        test_passed = syndrome_match and triage_match and specialist_match and action_plan_valid
         if test_passed:
             print(f"🎯 RESULT: ✅ PASSED")
             passed += 1
