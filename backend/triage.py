@@ -354,11 +354,90 @@ ESI_2_FLAGS = [
     "sakit kepala hebat", "mual parah", "kelelahan ekstrem", "halusinasi", "delusi"
 ]
 
-# Prediksi kebutuhan sumber daya (Resource) IGD untuk penentuan ESI 3-5
+# Prediksi kebutuhan tenaga medis spesifik untuk IGD
+MEDICAL_STAFF_ESTIMATE = {
+    "nyeri dada": {
+        "dokter_umum": 1,
+        "dokter_spesialis": 1,  # Cardiology
+        "perawat": 2,
+        "total": 4
+    },
+    "nyeri perut": {
+        "dokter_umum": 1,
+        "dokter_spesialis": 1,  # Internal Medicine/Surgery
+        "perawat": 1,
+        "total": 3
+    },
+    "trauma": {
+        "dokter_umum": 1,
+        "dokter_spesialis": 1,  # Surgery/Orthopedic
+        "perawat": 2,
+        "total": 4
+    },
+    "sesak napas": {
+        "dokter_umum": 1,
+        "dokter_spesialis": 1,  # Pulmonology/Internal
+        "perawat": 1,
+        "total": 3
+    },
+    "patah tulang": {
+        "dokter_umum": 1,
+        "dokter_spesialis": 1,  # Orthopedic
+        "perawat": 1,
+        "total": 3
+    },
+    "keseleo": {
+        "dokter_umum": 1,
+        "perawat": 1,
+        "total": 2
+    },
+    "luka robek": {
+        "dokter_umum": 1,
+        "perawat": 1,
+        "total": 2
+    },
+    "luka bakar kecil": {
+        "dokter_umum": 1,
+        "perawat": 1,
+        "total": 2
+    },
+    "demam": {
+        "dokter_umum": 1,
+        "dokter_spesialis": 0,
+        "perawat": 1,
+        "total": 2
+    },
+    "batuk pilek": {
+        "dokter_umum": 1,
+        "dokter_spesialis": 0,
+        "perawat": 1,
+        "total": 2
+    },
+    "sakit tenggorokan": {
+        "dokter_umum": 1,
+        "dokter_spesialis": 0,
+        "perawat": 1,
+        "total": 2
+    },
+    "gatal": {
+        "dokter_umum": 1,
+        "dokter_spesialis": 0,
+        "perawat": 1,
+        "total": 2
+    },
+    "muntah berulang": {
+        "dokter_umum": 1,
+        "dokter_spesialis": 1,  # Internal Medicine
+        "perawat": 1,
+        "total": 3
+    }
+}
+
+# Legacy compatibility - tetap available untuk backward compatibility
 RESOURCE_ESTIMATE = {
-    "nyeri dada": 3, "nyeri perut": 2, "trauma": 2, "sesak napas": 2, "muntah berulang": 2,
-    "patah tulang": 2, "keseleo": 1, "luka robek": 1, "luka bakar kecil": 1,
-    "demam": 0, "batuk pilek": 0, "sakit tenggorokan": 0, "gatal": 0
+    "nyeri dada": 4, "nyeri perut": 3, "trauma": 4, "sesak napas": 3, "muntah berulang": 3,
+    "patah tulang": 3, "keseleo": 2, "luka robek": 2, "luka bakar kecil": 2,
+    "demam": 2, "batuk pilek": 2, "sakit tenggorokan": 2, "gatal": 2
 }
 
 # ==========================================
@@ -378,10 +457,13 @@ class TriageResult:
     estimated_resources: int
     evidence: List[str]
     specialist_recommendations: List[str] = None
+    medical_staff_breakdown: Dict[str, int] = None
     
     def __post_init__(self):
         if self.specialist_recommendations is None:
             self.specialist_recommendations = []
+        if self.medical_staff_breakdown is None:
+            self.medical_staff_breakdown = {"dokter_umum": 0, "dokter_spesialis": 0, "perawat": 0, "total": 0}
 
 
 # ==========================================
@@ -861,21 +943,32 @@ def triage_engine(
             if photo_analysis.get("red_dominance", 0) > 25 and check_symptom_list(symptoms, complaint, ["trauma", "kecelakaan", "luka"]):
                 esi_2_symptoms.append("Perdarahan aktif dicurigai (Visual)")
 
-    # 5. ESTIMASI SUMBER DAYA (Resources) untuk ESI 3, 4, 5
+    # 5. ESTIMASI TENAGA MEDIS (Enhanced Resource) untuk ESI 3, 4, 5
     # Menghitung estimasi maksimal dari keluhan yang dicocokkan
     estimated_resources = 0
+    medical_staff_breakdown = {
+        "dokter_umum": 0,
+        "dokter_spesialis": 0,
+        "perawat": 0,
+        "total": 0
+    }
+    
     complaint_str = str(complaint) if complaint else ""
     combined_text_for_resources = " ".join([str(s) for s in symptoms]) + " " + complaint_str.lower()
     
-    for key_symptom, res_count in RESOURCE_ESTIMATE.items():
+    # Use enhanced medical staff estimation
+    for key_symptom, staff_breakdown in MEDICAL_STAFF_ESTIMATE.items():
         if has_symptom(combined_text_for_resources, key_symptom):
-            estimated_resources = max(estimated_resources, res_count)
-            evidence.append(f"Gejala '{key_symptom}' diprediksi butuh {res_count} sumber daya IGD")
-            
+            if staff_breakdown["total"] > medical_staff_breakdown["total"]:
+                medical_staff_breakdown = staff_breakdown.copy()
+                estimated_resources = staff_breakdown["total"]
+                evidence.append(f"Gejala '{key_symptom}' diprediksi butuh: {staff_breakdown.get('dokter_umum', 0)} dokter umum, {staff_breakdown.get('dokter_spesialis', 0)} spesialis, {staff_breakdown.get('perawat', 0)} perawat")
+    
     # Usia lanjut / bayi yang demam membutuhkan lebih banyak evaluasi (lab/observasi)
     if (age is not None and age >= 65) or age_cat in ["infant", "toddler"]:
         if estimated_resources == 0 and has_symptom(combined_text_for_resources, "demam"):
-            estimated_resources = 1
+            estimated_resources = 2
+            medical_staff_breakdown = {"dokter_umum": 1, "dokter_spesialis": 0, "perawat": 1, "total": 2}
             evidence.append("Pasien risiko usia (Geriatri/Pediatri) dengan demam diprediksi butuh evaluasi medis")
 
     # 6. PENENTUAN LEVEL ESI (DECISION TREE LOGIC)
@@ -1037,6 +1130,7 @@ def triage_engine(
         estimated_resources=estimated_resources,
         evidence=evidence,
         specialist_recommendations=specialist_recommendations,
+        medical_staff_breakdown=medical_staff_breakdown,
     )
 
 
