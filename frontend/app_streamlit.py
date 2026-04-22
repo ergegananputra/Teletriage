@@ -418,7 +418,17 @@ def render_patient_card(p: Dict[str, Any], context: str) -> None:
         with col3:
             st.metric("Status", p.get('status', '-'))
         with col4:
-            st.metric("Waktu", p.get('created_at', '-').split(' ')[1] if p.get('created_at') else '-')
+            # Safe split untuk created_at field
+            created_at = p.get('created_at', '-')
+            if created_at and created_at != '-':
+                time_parts = created_at.split(' ')
+                if len(time_parts) >= 2:
+                    time_display = time_parts[1]
+                else:
+                    time_display = created_at
+            else:
+                time_display = '-'
+            st.metric("Waktu", time_display)
         
         # Triage summary card
         st.markdown("### Ringkasan Triage")
