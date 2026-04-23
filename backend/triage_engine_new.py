@@ -27,6 +27,8 @@ class TriageResult:
     explanation: str = ""  # Explainable AI: why this triage decision was made
     differential_diagnosis: List[str] = None  # Top 3 syndromes
     rule_out: List[str] = None  # Syndromes to rule out
+    data_completeness: str = "Lengkap"  # Data completeness status
+    data_recommendations: List[str] = None  # Recommended additional data
     
     def __post_init__(self):
         if self.reasons is None:
@@ -39,6 +41,8 @@ class TriageResult:
             self.differential_diagnosis = []
         if self.rule_out is None:
             self.rule_out = []
+        if self.data_recommendations is None:
+            self.data_recommendations = []
 
 def emergency_guardrail(data: Dict[str, Any]) -> bool:
     """
@@ -96,10 +100,13 @@ def map_specialist(syndrome: str) -> str:
 
 def triage_engine(data: Dict[str, Any]) -> TriageResult:
     """
-    Production-grade triage engine with syndrome-based reasoning.
+    Production-grade triage engine with syndrome-based reasoning and data-awareness.
     """
     
-    # Step 1: Emergency guardrail check
+    # Step 0: Check data completeness
+    data_check = check_data_completeness(data)
+    
+    # Step 1: Emergency guardrail check (bypass data penalty for critical cases)
     if emergency_guardrail(data):
         return TriageResult(
             triage_level="EMERGENCY",
@@ -109,7 +116,9 @@ def triage_engine(data: Dict[str, Any]) -> TriageResult:
             reasons=["Critical vital signs or symptoms detected"],
             specialist="Emergency Medicine / ICU",
             ambulance_required=True,
-            action_plan=generate_action_plan("Critical Vital Signs")
+            action_plan=generate_action_plan("Critical Vital Signs"),
+            data_completeness=data_check['status'],
+            data_recommendations=data_check['recommendations']
         )
     
     # Step 2: Detect syndromes
@@ -121,23 +130,36 @@ def triage_engine(data: Dict[str, Any]) -> TriageResult:
         symptoms = [s.lower() for s in data.get("symptoms", [])]
         urgent_symptoms = ["nyeri dada", "sesak napas", "pusing berat", "muntah berulang"]
         
+        # Apply data awareness
+        reasons = []
+        if data_check['status'] != "Lengkap":
+            reasons.append("Informasi masih terbatas")
+        
         if any(sym in " ".join(symptoms) for sym in urgent_symptoms):
+            reasons.append("Urgent symptoms but no clear syndrome")
+            confidence = max(0.2, 0.4 - data_check['confidence_penalty'])
             return TriageResult(
                 triage_level="URGENT", 
                 action="Same-day medical evaluation",
-                confidence=0.4,
-                reasons=["Urgent symptoms but no clear syndrome"],
+                confidence=confidence,
+                reasons=reasons,
                 specialist="General Physician / Emergency Medicine",
-                action_plan=generate_action_plan("Unknown Syndrome")
+                action_plan=generate_action_plan("Unknown Syndrome"),
+                data_completeness=data_check['status'],
+                data_recommendations=data_check['recommendations']
             )
         
+        reasons.append("No clear syndrome or urgent symptoms")
+        confidence = max(0.1, 0.3 - data_check['confidence_penalty'])
         return TriageResult(
             triage_level="NON-URGENT",
             action="Outpatient evaluation within 24-48 hours", 
-            confidence=0.3,
-            reasons=["No clear syndrome or urgent symptoms"],
+            confidence=confidence,
+            reasons=reasons,
             specialist="General Physician",
-            action_plan=generate_action_plan("Unknown Syndrome")
+            action_plan=generate_action_plan("Unknown Syndrome"),
+            data_completeness=data_check['status'],
+            data_recommendations=data_check['recommendations']
         )
     
     # Step 4: Process top syndrome and multi-diagnosis
@@ -251,8 +273,15 @@ def triage_engine(data: Dict[str, Any]) -> TriageResult:
     if has_high_risk_medications(medications):
         all_reasons.append("High-risk medications detected")
     
+    # Step 8.5: Apply data awareness
+    if data_check['status'] != "Lengkap":
+        all_reasons.append("Informasi masih terbatas")
+    
+    # Apply confidence penalty for incomplete data
+    final_confidence = max(0.1, adjusted_score - data_check['confidence_penalty'])
+    
     # Step 9: Generate explanation for triage decision
-    explanation = f"Triage level {triage_level} ditentukan berdasarkan diagnosis utama {top_syndrome.name} dengan confidence {adjusted_score:.2f}. "
+    explanation = f"Triage level {triage_level} ditentukan berdasarkan diagnosis utama {top_syndrome.name} dengan confidence {final_confidence:.2f}. "
     explanation += f"Diagnosis didukung oleh: {', '.join(top_syndrome.reasons)}. "
     if clinical_reasons:
         explanation += f"Skor klinis memperkuat diagnosis: {', '.join(clinical_reasons)}. "
@@ -260,13 +289,15 @@ def triage_engine(data: Dict[str, Any]) -> TriageResult:
         explanation += f"Diagnosis diferensial yang dipertimbangkan: {', '.join(differential_diagnosis[1:])}. "
     if rule_out:
         explanation += f"Diagnosis yang dapat di-rule out: {', '.join(rule_out)}. "
+    if data_check['status'] != "Lengkap":
+        explanation += f"Data pasien {data_check['status'].lower()} (completeness: {data_check['completeness_score']:.0%}). "
     explanation += f"Keputusan triage berdasarkan kombinasi gejala, faktor risiko, skor klinis (qSOFA/Wells/HEART), dan tanda vital."
     
     return TriageResult(
         triage_level=triage_level,
         action=action,
         syndrome=top_syndrome.name,
-        confidence=adjusted_score,  # Use adjusted score
+        confidence=final_confidence,  # Use final confidence with data awareness
         reasons=all_reasons,
         specialist=specialist,
         ambulance_required=ambulance_required,
@@ -274,7 +305,9 @@ def triage_engine(data: Dict[str, Any]) -> TriageResult:
         action_plan=action_plan,
         explanation=explanation,
         differential_diagnosis=differential_diagnosis,
-        rule_out=rule_out
+        rule_out=rule_out,
+        data_completeness=data_check['status'],
+        data_recommendations=data_check['recommendations']
     )
 
 def _safe_int(value: Any) -> int:
@@ -285,6 +318,80 @@ def _safe_int(value: Any) -> int:
         return int(float(str(value)))
     except (ValueError, TypeError):
         return None
+
+def check_data_completeness(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Check data completeness and provide recommendations.
+    Returns: {
+        'completeness_score': float (0-1),
+        'status': str ('Lengkap', 'Terbatas', 'Sangat Terbatas'),
+        'recommendations': List[str],
+        'confidence_penalty': float
+    }
+    """
+    recommendations = []
+    missing_count = 0
+    total_checks = 0
+    
+    # Check symptoms (critical)
+    symptoms = data.get("symptoms", [])
+    total_checks += 1
+    if not symptoms or len(symptoms) == 0:
+        missing_count += 1
+        recommendations.append("Sebutkan gejala yang Anda rasakan (contoh: nyeri dada, sesak napas, demam)")
+    
+    # Check vital signs (important)
+    vital_signs = ["heart_rate", "blood_pressure", "spo2"]
+    for vital in vital_signs:
+        total_checks += 1
+        if not data.get(vital):
+            missing_count += 1
+    if not data.get("heart_rate"):
+        recommendations.append("Tambahkan detak jantung (bpm) untuk penilaian yang lebih akurat")
+    if not data.get("blood_pressure"):
+        recommendations.append("Tambahkan tekanan darah (contoh: 120/80)")
+    if not data.get("spo2"):
+        recommendations.append("Tambahkan kadar oksigen darah (%) untuk cek kesehatan paru")
+    
+    # Check risk factors (important)
+    risk_factors = data.get("risk_factors", [])
+    total_checks += 1
+    if not risk_factors or len(risk_factors) == 0:
+        missing_count += 1
+        recommendations.append("Sebutkan faktor risiko (contoh: diabetes, hipertensi, merokok) untuk diagnosis lebih tepat")
+    
+    # Check age (moderately important)
+    total_checks += 1
+    if not data.get("age"):
+        missing_count += 1
+        recommendations.append("Tambahkan usia untuk penilaian risiko yang lebih akurat")
+    
+    # Check sex (moderately important)
+    total_checks += 1
+    if not data.get("sex"):
+        missing_count += 1
+        recommendations.append("Tambahkan jenis kelamin untuk diagnosis yang lebih spesifik")
+    
+    # Calculate completeness score
+    completeness_score = 1.0 - (missing_count / total_checks) if total_checks > 0 else 0.0
+    
+    # Determine status
+    if completeness_score >= 0.8:
+        status = "Lengkap"
+        confidence_penalty = 0.0
+    elif completeness_score >= 0.5:
+        status = "Terbatas"
+        confidence_penalty = 0.10  # Reduce confidence by 10%
+    else:
+        status = "Sangat Terbatas"
+        confidence_penalty = 0.20  # Reduce confidence by 20%
+    
+    return {
+        'completeness_score': completeness_score,
+        'status': status,
+        'recommendations': recommendations,
+        'confidence_penalty': confidence_penalty
+    }
 
 def get_triage_summary(result: TriageResult) -> str:
     """Get human-readable triage summary."""
