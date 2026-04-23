@@ -526,7 +526,12 @@ def check_symptom_list(symptoms_raw: List[str], complaint: str, target_list: Lis
 # MODUL ANALISIS GAMBAR
 # ==========================================
 
-def analyze_photo(image_file) -> Dict[str, Any]:
+def analyze_photo(image_file) -> Optional[Dict[str, Any]]:
+    """
+    Analyze photo for clinical clues.
+    Returns None on failure (safe wrapper - no crash).
+    Image processing is optional - text triage works fully without image.
+    """
     try:
         img = Image.open(image_file).convert("RGB")
         img = ImageOps.exif_transpose(img)
@@ -624,7 +629,8 @@ def analyze_photo(image_file) -> Dict[str, Any]:
             "texture_score": round(texture_score, 2),
         }
     except Exception as exc:
-        return {"ok": False, "error": str(exc), "quality_flags": ["Gagal membaca foto"], "visual_clues": []}
+        # Return None on failure - safe wrapper, no crash
+        return None
 
 
 # ==========================================
@@ -820,25 +826,26 @@ def ml_enhance_triage_score(
             vital_score -= 0.5
             evidence_factors.append("Kehamilan")
             
-        # Photo analysis enhancement
+        # Photo analysis enhancement (OPTIONAL - does not override text triage)
+        # Image processing is optional - returns None on failure, text triage works fully without image
+        # Image results are evidence ONLY - NO impact on score to prevent overriding text triage
         if photo_analysis and photo_analysis.get("ok"):
             red_pct = photo_analysis.get("red_percentage", 0)
             blue_pct = photo_analysis.get("blue_percentage", 0)
             edge_dens = photo_analysis.get("edge_density", 0)
             
+            # Image results as supplementary evidence ONLY - NO SCORE IMPACT
+            # Image cannot override main triage decisions
             if red_pct > 8:
-                vital_score -= 1
-                evidence_factors.append("Perdarahan signifikan")
-            elif red_pct > 5:
-                vital_score -= 0.5
+                evidence_factors.append("Perdarahan signifikan pada foto (suplemen)")
+            if red_pct > 5:
+                evidence_factors.append("Perdarahan pada foto (suplemen)")
                 
             if blue_pct > 5:
-                vital_score -= 0.5
-                evidence_factors.append("Sianosis/memar")
+                evidence_factors.append("Sianosis/memar pada foto (suplemen)")
                 
             if edge_dens > 3:
-                vital_score -= 0.5
-                evidence_factors.append("Luka/trauma complex")
+                evidence_factors.append("Luka/trauma complex pada foto (suplemen)")
         
         # Calculate enhanced score with conservative approach
         enhanced_score = max(1, min(5, base_score + vital_score))
@@ -933,15 +940,18 @@ def triage_engine(
         evidence.append("Kehamilan dengan penyulit terdeteksi")
         esi_2_symptoms.append("Kehamilan berisiko")
 
-    # 4. Integrasi Bukti Visual dari Foto
+    # 4. Integrasi Bukti Visual dari Foto (OPTIONAL - does not override text triage)
+    # Image processing is optional - text triage works fully without image
+    # Image results are used as supplementary evidence only, not to override main triage decisions
     if photo_analysis and photo_analysis.get("ok"):
         if photo_analysis.get("visual_clues"):
             evidence.extend([f"Foto: {x}" for x in photo_analysis["visual_clues"]])
-            # Up-triage logic based on visual
+            # Visual clues as SUPPLEMENTARY evidence only - does not override text-based triage
+            # Image cannot override main triage results
             if photo_analysis.get("blue_dominance", 0) > 15:
-                esi_2_symptoms.append("Sianosis (Visual)")
+                evidence.append("Indikasi sianosis pada foto (suplemen)")
             if photo_analysis.get("red_dominance", 0) > 25 and check_symptom_list(symptoms, complaint, ["trauma", "kecelakaan", "luka"]):
-                esi_2_symptoms.append("Perdarahan aktif dicurigai (Visual)")
+                evidence.append("Indikasi perdarahan pada foto (suplemen)")
 
     # 5. ESTIMASI TENAGA MEDIS (Enhanced Resource) untuk ESI 3, 4, 5
     # Menghitung estimasi maksimal dari keluhan yang dicocokkan
