@@ -5,6 +5,7 @@ Replaces direct symptom-to-triage mapping with syndrome-based reasoning.
 
 from typing import List, Dict, Any
 from dataclasses import dataclass
+from clinical_scoring import calculate_qsofa, calculate_wells, calculate_heart_score
 
 @dataclass
 class SyndromeResult:
@@ -60,9 +61,18 @@ def detect_syndromes(data: Dict[str, Any]) -> List[SyndromeResult]:
         if "nyeri dada berat" in symptoms or "nyeri dada seperti ditindih" in symptoms:
             acs_confidence += 0.10
         
+        # Boost with HEART score
+        heart_score, heart_interp = calculate_heart_score(data)
+        if heart_score >= 7:
+            acs_confidence = min(0.98, acs_confidence + 0.10)
+            reasons.append("high HEART score")
+        elif heart_score >= 4:
+            acs_confidence = min(0.95, acs_confidence + 0.05)
+            reasons.append("moderate HEART score")
+        
         syndromes.append(SyndromeResult(
             "ACS", 
-            min(0.95, acs_confidence),  # Cap at 0.95
+            min(0.98, acs_confidence),  # Cap at 0.98
             reasons
         ))
     
@@ -117,6 +127,12 @@ def detect_syndromes(data: Dict[str, Any]) -> List[SyndromeResult]:
         sepsis_confidence = 0.85 + (sepsis_qsofa_score - 2) * 0.05
         sepsis_confidence = min(0.95, sepsis_confidence)
         
+        # Boost with clinical qSOFA score
+        qsofa_score, qsofa_interp = calculate_qsofa(data)
+        if qsofa_score >= 2:
+            sepsis_confidence = min(0.98, sepsis_confidence + 0.05)
+            sepsis_reasons.append("high qSOFA score")
+        
         syndromes.append(SyndromeResult(
             "Sepsis", 
             sepsis_confidence, 
@@ -159,9 +175,18 @@ def detect_syndromes(data: Dict[str, Any]) -> List[SyndromeResult]:
         if "batuk darah" in symptoms or "hemoptisis" in symptoms:
             pe_confidence += 0.10
         
+        # Boost with Wells score
+        wells_score, wells_interp = calculate_wells(data)
+        if wells_score >= 4:
+            pe_confidence = min(0.95, pe_confidence + 0.10)
+            reasons.append("high Wells score")
+        elif wells_score >= 2:
+            pe_confidence = min(0.90, pe_confidence + 0.05)
+            reasons.append("moderate Wells score")
+        
         syndromes.append(SyndromeResult(
             "Pulmonary Embolism", 
-            min(0.90, pe_confidence),
+            min(0.95, pe_confidence),
             reasons
         ))
     

@@ -10,6 +10,7 @@ from text_matching import check_symptom_list, check_medical_terms
 from syndrome_engine import detect_syndromes, SyndromeResult
 from medication_rules import detect_medication_risks, has_high_risk_medications
 from treatment_engine import generate_action_plan
+from clinical_scoring import calculate_qsofa, calculate_wells, calculate_heart_score
 
 @dataclass
 class TriageResult:
@@ -135,6 +136,43 @@ def triage_engine(data: Dict[str, Any]) -> TriageResult:
     # Step 4: Process top syndrome
     top_syndrome = syndromes[0]
     
+    # Step 4.5: Apply clinical scoring decision support
+    # Calculate clinical scores
+    qsofa_score, qsofa_interp = calculate_qsofa(data)
+    wells_score, wells_interp = calculate_wells(data)
+    heart_score, heart_interp = calculate_heart_score(data)
+    
+    # Decision support: prioritize syndromes with high clinical scores
+    clinical_boost = 0.0
+    clinical_reasons = []
+    
+    # qSOFA ≥ 2 → prioritize Sepsis
+    if qsofa_score >= 2 and top_syndrome.name in ["Sepsis", "Possible Sepsis"]:
+        clinical_boost += 0.05
+        clinical_reasons.append("high qSOFA supports sepsis diagnosis")
+    elif qsofa_score >= 2 and top_syndrome.name not in ["Sepsis", "Possible Sepsis"]:
+        # High qSOFA but syndrome not sepsis - consider sepsis as alternative
+        clinical_boost -= 0.02
+        clinical_reasons.append("high qSOFA suggests sepsis consideration")
+    
+    # Wells Score high → prioritize PE
+    if wells_score >= 4 and top_syndrome.name == "Pulmonary Embolism":
+        clinical_boost += 0.05
+        clinical_reasons.append("high Wells score supports PE diagnosis")
+    elif wells_score >= 7 and top_syndrome.name != "Pulmonary Embolism":
+        # Very high Wells but syndrome not PE - consider PE as alternative
+        clinical_boost -= 0.02
+        clinical_reasons.append("high Wells score suggests PE consideration")
+    
+    # HEART Score high → prioritize ACS
+    if heart_score >= 7 and top_syndrome.name == "ACS":
+        clinical_boost += 0.05
+        clinical_reasons.append("high HEART score supports ACS diagnosis")
+    elif heart_score >= 7 and top_syndrome.name != "ACS":
+        # Very high HEART but syndrome not ACS - consider ACS as alternative
+        clinical_boost -= 0.02
+        clinical_reasons.append("high HEART score suggests ACS consideration")
+    
     # Step 5: Determine triage level with clinical modifiers
     # Base triage level from syndrome score
     base_score = top_syndrome.score
@@ -157,7 +195,7 @@ def triage_engine(data: Dict[str, Any]) -> TriageResult:
             # Abnormal vitals - upgrade borderline cases
             vital_modifier = 0.10
     
-    adjusted_score = max(0.0, min(1.0, base_score + vital_modifier))
+    adjusted_score = max(0.0, min(1.0, base_score + vital_modifier + clinical_boost))
     
     # Determine triage level with adjusted score
     if adjusted_score >= 0.90:
@@ -195,6 +233,7 @@ def triage_engine(data: Dict[str, Any]) -> TriageResult:
     
     # Step 8: Combine reasons
     all_reasons = top_syndrome.reasons.copy()
+    all_reasons.extend(clinical_reasons)  # Add clinical scoring reasons
     if has_high_risk_medications(medications):
         all_reasons.append("High-risk medications detected")
     

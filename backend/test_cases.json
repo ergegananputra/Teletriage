@@ -70,18 +70,18 @@
     {
         "case_id": "dka_001",
         "name": "Diabetic Ketoacidosis",
-        "symptoms": ["muntah berulang", "napas cepat", "mual hebat"],
+        "symptoms": ["muntah berulang", "napas cepat", "mual hebat", "bau aseton napas", "dehidrasi"],
         "risk_factors": ["diabetes tipe 1"],
         "medications": ["insulin"],
         "past_medical_history": ["diabetes tipe 1"],
-        "heart_rate": 115,
-        "blood_pressure": "100/60",
-        "spo2": 95,
+        "heart_rate": 120,
+        "blood_pressure": "95/60",
+        "spo2": 94,
         "gcs": 14,
         "sex": "laki-laki",
         "age": 25,
         "expected_syndrome": "DKA",
-        "expected_triage": "EMERGENCY",
+        "expected_triage": "URGENT",
         "expected_specialist": "Internal Medicine / Endocrinology"
     },
     {
