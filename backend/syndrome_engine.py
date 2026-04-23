@@ -32,7 +32,7 @@ def detect_syndromes(data: Dict[str, Any]) -> List[SyndromeResult]:
     heart_rate = _safe_int(data.get("heart_rate"))
     blood_pressure = str(data.get("blood_pressure", "")).lower()
     
-    # --- ACUTE CORONARY SYNDROME (ACS) ---
+    # --- ACUTE CORONARY SYNDROME (ACS) - Dynamic Scoring ---
     acs_symptoms = ["nyeri dada", "nyeri dada berat", "nyeri dada menyebar", 
                     "nyeri dada seperti ditindih", "nyeri epigastrium", "nyeri ulu hati"]
     acs_risks = ["diabetes", "riwayat penyakit jantung", "hipertensi", "kolesterol tinggi"]
@@ -40,40 +40,97 @@ def detect_syndromes(data: Dict[str, Any]) -> List[SyndromeResult]:
     if (any(sym in symptoms for sym in acs_symptoms) and 
         any(risk in risk_factors for risk in acs_risks)):
         reasons = []
-        if any(sym in symptoms for sym in acs_symptoms):
+        
+        # Count symptom matches
+        symptom_count = sum(1 for sym in acs_symptoms if sym in symptoms)
+        if symptom_count >= 1:
             reasons.append("chest pain symptoms")
-        if any(risk in risk_factors for risk in acs_risks):
+        
+        # Count risk factors
+        risk_count = sum(1 for risk in acs_risks if risk in risk_factors)
+        if risk_count >= 1:
             reasons.append("cardiac risk factors")
+        
+        # Dynamic confidence: base 0.60 + symptom strength + risk factors
+        acs_confidence = 0.60
+        acs_confidence += min(0.20, symptom_count * 0.10)  # Max 0.20 from symptoms
+        acs_confidence += min(0.15, risk_count * 0.05)  # Max 0.15 from risks
+        
+        # Boost for severe symptoms
+        if "nyeri dada berat" in symptoms or "nyeri dada seperti ditindih" in symptoms:
+            acs_confidence += 0.10
         
         syndromes.append(SyndromeResult(
             "ACS", 
-            0.85, 
+            min(0.95, acs_confidence),  # Cap at 0.95
             reasons
         ))
     
-    # --- SEPSIS ---
-    sepsis_symptoms = ["bingung", "kebingungan", "perubahan perilaku", "delirium", 
-                     "demam tinggi", "menggigil", "kulit pucat", "sianosis"]
-    sepsis_risks = ["infeksi", "luka terbuka", "operasi baru", "imunokompromais"]
+    # --- SEPSIS (qSOFA-based) ---
+    # qSOFA criteria: Altered mental status, RR >= 22, SBP <= 100
+    sepsis_mental = ["bingung", "kebingungan", "perubahan perilaku", "delirium", 
+                     "tidak sadar", "disorientasi"]
+    sepsis_resp = ["napas cepat", "napas pendek", "sesak napas", "bernafas cepat"]
+    sepsis_infection_sources = [
+        "infeksi", "luka terbuka", "operasi baru", "imunokompromais",
+        "infeksi saluran kemih", "infeksi paru", "pneumonia", "infeksi kulit",
+        "luka operasi", "kanker", "kemoterapi", "dialisis"
+    ]
     
-    if (any(sym in symptoms for sym in sepsis_symptoms) and 
-        heart_rate and heart_rate > 100 and
-        any(risk in risk_factors for risk in sepsis_risks)):
-        reasons = []
-        if any(sym in symptoms for sym in ["bingung", "kebingungan", "delirium"]):
-            reasons.append("altered mental status")
-        if heart_rate and heart_rate > 100:
-            reasons.append("tachycardia")
-        if any(risk in risk_factors for risk in sepsis_risks):
-            reasons.append("infection risk")
+    sepsis_qsofa_score = 0
+    sepsis_reasons = []
+    
+    # qSOFA 1: Altered mental status
+    if any(sym in symptoms for sym in sepsis_mental):
+        sepsis_qsofa_score += 1
+        sepsis_reasons.append("altered mental status")
+    
+    # qSOFA 2: Respiratory rate >= 22 (proxy: rapid breathing symptoms)
+    if any(sym in symptoms for sym in sepsis_resp):
+        sepsis_qsofa_score += 1
+        sepsis_reasons.append("rapid breathing")
+    
+    # qSOFA 3: Systolic BP <= 100
+    bp_systolic = _safe_int(blood_pressure.split("/")[0]) if "/" in blood_pressure else None
+    if bp_systolic and bp_systolic <= 100:
+        sepsis_qsofa_score += 1
+        sepsis_reasons.append("hypotension")
+    
+    # Heart rate > 100 (additional sepsis indicator)
+    if heart_rate and heart_rate > 100:
+        sepsis_qsofa_score += 1
+        sepsis_reasons.append("tachycardia")
+    
+    # Fever or hypothermia
+    if any(sym in symptoms for sym in ["demam tinggi", "menggigil", "demam"]):
+        sepsis_qsofa_score += 1
+        sepsis_reasons.append("fever")
+    
+    # Infection source must be present
+    infection_source = any(risk in risk_factors for risk in sepsis_infection_sources)
+    if infection_source:
+        sepsis_reasons.append("infection source")
+    
+    # Calculate sepsis confidence based on qSOFA + infection source
+    if sepsis_qsofa_score >= 2 and infection_source:
+        # High confidence sepsis
+        sepsis_confidence = 0.85 + (sepsis_qsofa_score - 2) * 0.05
+        sepsis_confidence = min(0.95, sepsis_confidence)
         
         syndromes.append(SyndromeResult(
             "Sepsis", 
-            0.90, 
-            reasons
+            sepsis_confidence, 
+            sepsis_reasons
+        ))
+    elif sepsis_qsofa_score >= 1 and infection_source:
+        # Possible sepsis - lower confidence
+        syndromes.append(SyndromeResult(
+            "Possible Sepsis", 
+            0.65, 
+            sepsis_reasons
         ))
     
-    # --- PULMONARY EMBOLISM (PE) ---
+    # --- PULMONARY EMBOLISM (PE) - Dynamic Scoring ---
     pe_symptoms = ["sesak napas mendadak", "sesak napas berat", "nyeri dada pleuritik", 
                   "nyeri dada saat bernapas", "batuk darah", "hemoptisis"]
     pe_risks = ["obesitas", "immobilisasi", "operasi besar", "kontrasepsi oral", 
@@ -82,20 +139,33 @@ def detect_syndromes(data: Dict[str, Any]) -> List[SyndromeResult]:
     if (any(sym in symptoms for sym in pe_symptoms) and 
         any(risk in risk_factors for risk in pe_risks)):
         reasons = []
+        
+        symptom_count = sum(1 for sym in pe_symptoms if sym in symptoms)
         if "sesak napas" in " ".join(symptoms):
             reasons.append("acute dyspnea")
         if any(sym in symptoms for sym in ["nyeri dada pleuritik", "nyeri dada saat bernapas"]):
             reasons.append("pleuritic chest pain")
-        if any(risk in risk_factors for risk in pe_risks):
+        
+        risk_count = sum(1 for risk in pe_risks if risk in risk_factors)
+        if risk_count >= 1:
             reasons.append("PE risk factors")
+        
+        # Dynamic confidence
+        pe_confidence = 0.55
+        pe_confidence += min(0.25, symptom_count * 0.08)
+        pe_confidence += min(0.15, risk_count * 0.05)
+        
+        # Boost for critical symptoms
+        if "batuk darah" in symptoms or "hemoptisis" in symptoms:
+            pe_confidence += 0.10
         
         syndromes.append(SyndromeResult(
             "Pulmonary Embolism", 
-            0.85, 
+            min(0.90, pe_confidence),
             reasons
         ))
     
-    # --- ECTOPIC PREGNANCY ---
+    # --- ECTOPIC PREGNANCY - Dynamic Scoring ---
     if data.get("sex", "").lower() == "perempuan":
         ectopic_symptoms = ["nyeri perut bagian bawah", "nyeri perut satu sisi", 
                           "perdarahan vagina", "spotting", "pingsan", "syok"]
@@ -105,20 +175,33 @@ def detect_syndromes(data: Dict[str, Any]) -> List[SyndromeResult]:
         if (any(sym in symptoms for sym in ectopic_symptoms) and 
             any(risk in risk_factors for risk in ectopic_risks)):
             reasons = []
+            
+            symptom_count = sum(1 for sym in ectopic_symptoms if sym in symptoms)
             if any(sym in symptoms for sym in ["nyeri perut bagian bawah", "nyeri perut satu sisi"]):
                 reasons.append("lower abdominal pain")
             if any(sym in symptoms for sym in ["perdarahan vagina", "spotting"]):
                 reasons.append("vaginal bleeding")
+            
+            risk_count = sum(1 for risk in ectopic_risks if risk in risk_factors)
             if any(risk in risk_factors for risk in ["hamil", "telat haid"]):
                 reasons.append("pregnancy status")
             
+            # Dynamic confidence
+            ectopic_confidence = 0.70
+            ectopic_confidence += min(0.20, symptom_count * 0.07)
+            ectopic_confidence += min(0.10, risk_count * 0.05)
+            
+            # Boost for critical symptoms
+            if "pingsan" in symptoms or "syok" in symptoms:
+                ectopic_confidence += 0.15
+            
             syndromes.append(SyndromeResult(
                 "Ectopic Pregnancy", 
-                0.95, 
+                min(0.95, ectopic_confidence),
                 reasons
             ))
     
-    # --- DIABETIC KETOACIDOSIS (DKA) ---
+    # --- DIABETIC KETOACIDOSIS (DKA) - Dynamic Scoring ---
     dka_symptoms = ["muntah berulang", "mual hebat", "nyeri perut", 
                    "napas cepat", "napas dalam", "bau aseton napas", "dehidrasi"]
     dka_medications = ["insulin", "metformin", "glibenklamid", "glimepiride"]
@@ -127,20 +210,35 @@ def detect_syndromes(data: Dict[str, Any]) -> List[SyndromeResult]:
     if (any(sym in symptoms for sym in dka_symptoms) and 
         any(risk in risk_factors for risk in dka_risks)):
         reasons = []
+        
+        symptom_count = sum(1 for sym in dka_symptoms if sym in symptoms)
         if any(sym in symptoms for sym in ["muntah berulang", "mual hebat"]):
             reasons.append("GI symptoms")
         if any(sym in symptoms for sym in ["napas cepat", "napas dalam"]):
             reasons.append("kussmaul breathing")
+        
+        risk_count = sum(1 for risk in dka_risks if risk in risk_factors)
         if any(risk in risk_factors for risk in dka_risks):
             reasons.append("diabetes history")
         
+        # Dynamic confidence
+        dka_confidence = 0.65
+        dka_confidence += min(0.20, symptom_count * 0.07)
+        dka_confidence += min(0.10, risk_count * 0.05)
+        
+        # Boost for classic DKA signs
+        if "bau aseton napas" in symptoms:
+            dka_confidence += 0.10
+        if any(med in medications for med in dka_medications):
+            dka_confidence += 0.05
+        
         syndromes.append(SyndromeResult(
             "DKA", 
-            0.90, 
+            min(0.90, dka_confidence),
             reasons
         ))
     
-    # --- STROKE ---
+    # --- STROKE - Dynamic Scoring ---
     stroke_symptoms = ["lemah satu sisi", "lemah tangan", "lemah kaki", "wajah mencong", 
                       "bicara pelo", "sulit bicara", "penglihatan ganda", "pusing berat"]
     stroke_risks = ["hipertensi", "diabetes", "riwayat stroke", "fibrilasi atrial", 
@@ -149,34 +247,128 @@ def detect_syndromes(data: Dict[str, Any]) -> List[SyndromeResult]:
     if (any(sym in symptoms for sym in stroke_symptoms) and 
         any(risk in risk_factors for risk in stroke_risks)):
         reasons = []
+        
+        symptom_count = sum(1 for sym in stroke_symptoms if sym in symptoms)
         if any(sym in symptoms for sym in ["lemah satu sisi", "lemah tangan", "lemah kaki"]):
             reasons.append("focal weakness")
         if any(sym in symptoms for sym in ["wajah mencong", "bicara pelo", "sulit bicara"]):
             reasons.append("facial droop/speech changes")
-        if any(risk in risk_factors for risk in stroke_risks):
+        
+        risk_count = sum(1 for risk in stroke_risks if risk in risk_factors)
+        if risk_count >= 1:
             reasons.append("stroke risk factors")
+        
+        # Dynamic confidence
+        stroke_confidence = 0.60
+        stroke_confidence += min(0.25, symptom_count * 0.08)
+        stroke_confidence += min(0.15, risk_count * 0.05)
+        
+        # Boost for classic FAST symptoms
+        if any(sym in symptoms for sym in ["wajah mencong", "bicara pelo", "sulit bicara"]):
+            stroke_confidence += 0.10
         
         syndromes.append(SyndromeResult(
             "Stroke", 
-            0.85, 
+            min(0.90, stroke_confidence),
             reasons
         ))
     
-    # --- APPENDICITIS ---
-    appendicitis_symptoms = ["nyeri perut kanan bawah", "nyeri perut memburuk", 
-                            "mual", "muntah", "demam", "nafsu makan hilang"]
+    # --- APPENDICITIS (Pattern-Based) ---
+    # Classic pattern: RLQ pain + migration + systemic symptoms
+    appendicitis_pattern = [
+        "nyeri perut kanan bawah", "nyeri perut sekitar pusar lalu pindah kanan bawah",
+        "nyeri perut memburuk saat batuk", "nyeri perut saat bergerak"
+    ]
+    appendicitis_systemic = ["demam", "mual", "muntah", "nafsu makan hilang", "lemah"]
     
-    if (any(sym in symptoms for sym in appendicitis_symptoms) and 
-        "nyeri perut kanan bawah" in " ".join(symptoms)):
-        reasons = []
-        reasons.append("RLQ pain")
-        if any(sym in symptoms for sym in ["demam", "mual", "muntah"]):
-            reasons.append("systemic symptoms")
-        
+    appendicitis_score = 0.0
+    appendicitis_reasons = []
+    
+    # Check for classic RLQ pain (required)
+    if "nyeri perut kanan bawah" in " ".join(symptoms):
+        appendicitis_score += 0.4
+        appendicitis_reasons.append("RLQ pain")
+    
+    # Check for pain migration (strong indicator)
+    if any(sym in symptoms for sym in ["nyeri perut sekitar pusar lalu pindah kanan bawah", 
+                                          "nyeri perut pindah ke kanan bawah"]):
+        appendicitis_score += 0.3
+        appendicitis_reasons.append("pain migration")
+    
+    # Check for systemic symptoms
+    systemic_count = sum(1 for sym in appendicitis_systemic if sym in symptoms)
+    if systemic_count >= 2:
+        appendicitis_score += 0.2
+        appendicitis_reasons.append("systemic inflammation")
+    
+    # Check for rebound tenderness equivalent
+    if any(sym in symptoms for sym in ["nyeri perut saat ditekan", "nyeri perut saat dilepas"]):
+        appendicitis_score += 0.1
+        appendicitis_reasons.append("peritoneal signs")
+    
+    if appendicitis_score >= 0.5:
         syndromes.append(SyndromeResult(
             "Appendicitis", 
-            0.75, 
-            reasons
+            min(0.85, appendicitis_score),  # Cap at 0.85
+            appendicitis_reasons
+        ))
+    
+    # --- CHOLECYSTITIS (Pattern-Based) ---
+    cholecystitis_pattern = [
+        "nyeri perut kanan atas", "nyeri perut sebelah kanan atas",
+        "nyeri perut setelah makan berlemak", "nyeri perut setelah makan"
+    ]
+    cholecystitis_systemic = ["demam", "mual", "muntah", "kuning", "kulit kuning"]
+    
+    cholecystitis_score = 0.0
+    cholecystitis_reasons = []
+    
+    if any(sym in symptoms for sym in cholecystitis_pattern):
+        cholecystitis_score += 0.4
+        cholecystitis_reasons.append("RUQ pain")
+    
+    if any(sym in symptoms for sym in ["nyeri perut setelah makan berlemak", 
+                                          "nyeri perut setelah makan"]):
+        cholecystitis_score += 0.3
+        cholecystitis_reasons.append("postprandial pain")
+    
+    if any(sym in symptoms for sym in ["kuning", "kulit kuning", "mata kuning"]):
+        cholecystitis_score += 0.2
+        cholecystitis_reasons.append("jaundice")
+    
+    if any(sym in symptoms for sym in cholecystitis_systemic):
+        cholecystitis_score += 0.1
+        cholecystitis_reasons.append("systemic symptoms")
+    
+    if cholecystitis_score >= 0.5:
+        syndromes.append(SyndromeResult(
+            "Cholecystitis", 
+            min(0.80, cholecystitis_score),
+            cholecystitis_reasons
+        ))
+    
+    # --- PERFORATED ULCER (Pattern-Based) ---
+    ulcer_pattern = [
+        "nyeri perut mendadak hebat", "nyeri perut seperti ditusuk",
+        "perut kaku", "perut papan", "nyeri perut seluruh perut"
+    ]
+    
+    if any(sym in symptoms for sym in ulcer_pattern):
+        ulcer_score = 0.7
+        ulcer_reasons = ["acute abdominal pain"]
+        
+        if any(sym in symptoms for sym in ["perut kaku", "perut papan"]):
+            ulcer_score += 0.2
+            ulcer_reasons.append("abdominal rigidity")
+        
+        if any(sym in symptoms for sym in ["riwayat maag", "riwayat tukak lambung"]):
+            ulcer_score += 0.1
+            ulcer_reasons.append("ulcer history")
+        
+        syndromes.append(SyndromeResult(
+            "Perforated Ulcer", 
+            min(0.95, ulcer_score),
+            ulcer_reasons
         ))
     
     # Return sorted by confidence score (highest first)

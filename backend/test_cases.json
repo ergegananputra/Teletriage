@@ -36,7 +36,7 @@
     {
         "case_id": "ectopic_001",
         "name": "Ectopic Pregnancy",
-        "symptoms": ["nyeri perut bagian bawah", "spotting"],
+        "symptoms": ["nyeri perut bagian bawah", "perdarahan vagina", "nyeri perut satu sisi"],
         "risk_factors": ["hamil"],
         "medications": ["pil kb"],
         "past_medical_history": [],
@@ -104,11 +104,11 @@
     {
         "case_id": "appendicitis_001",
         "name": "Acute Appendicitis",
-        "symptoms": ["nyeri perut kanan bawah", "mual", "demam"],
+        "symptoms": ["nyeri perut kanan bawah", "nyeri perut sekitar pusar lalu pindah kanan bawah", "mual", "demam", "nafsu makan hilang"],
         "risk_factors": [],
         "medications": [],
         "past_medical_history": [],
-        "heart_rate": 90,
+        "heart_rate": 95,
         "blood_pressure": "120/75",
         "spo2": 98,
         "gcs": 15,

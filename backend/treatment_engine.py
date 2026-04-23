@@ -16,101 +16,151 @@ def generate_action_plan(syndrome: str) -> Dict[str, Union[List[str], str]]:
     - Use safe language: "pertimbangkan", "akan dilakukan di RS", "perlu evaluasi"
     """
     
-    plans = {
+    ACTION_PLANS = {
         "DKA": {
             "immediate": [
                 "Segera ke IGD",
-                "Hentikan sementara SGLT2 inhibitor",
-                "Jika memungkinkan, pertahankan hidrasi (jika tidak muntah berat)"
+                "Hentikan sementara SGLT2 inhibitor jika ada",
+                "Pertahankan hidrasi"
             ],
             "hospital": [
-                "Cek gas darah (asidosis metabolik)",
-                "Cek keton darah/urin",
-                "Monitoring elektrolit (terutama kalium)",
-                "Terapi cairan intravena dan insulin (sesuai protokol)"
+                "Cek gas darah arteri",
+                "Elektrolit lengkap",
+                "Gula darah dan keton",
+                "EKG untuk monitoring"
             ],
             "specialist": "Sp.PD (Endokrinologi/Metabolik)"
         },
-
         "ACS": {
             "immediate": [
                 "Segera ke IGD",
                 "Hindari aktivitas fisik",
-                "Pertimbangkan aspirin jika tidak ada kontraindikasi"
+                "Pertimbangkan aspirin jika tidak alergi"
             ],
             "hospital": [
                 "EKG serial",
-                "Pemeriksaan troponin",
-                "Monitoring jantung kontinu"
+                "Troponin serial",
+                "Angiografi jika indikasi",
+                "Monitor tekanan darah"
             ],
             "specialist": "Sp.JP (Kardiologi)"
         },
-
-        "Pulmonary Embolism": {
+        "PE": {
             "immediate": [
                 "Segera ke IGD",
-                "Hindari aktivitas berat"
+                "Hindari aktivitas berat",
+                "Pertahankan oksigenasi"
             ],
             "hospital": [
                 "D-dimer atau CT Pulmonary Angiography",
-                "Evaluasi kebutuhan antikoagulan"
+                "USG Doppler ekstremitas",
+                "Evaluasi antikoagulan",
+                "Monitor tekanan darah"
             ],
-            "specialist": "Sp.P / Sp.PD"
+            "specialist": "Sp.P / Sp.PD (Paru/Penyakit Dalam)"
         },
-
         "Ectopic Pregnancy": {
             "immediate": [
                 "Segera ke IGD",
-                "Jangan menunda jika ada nyeri hebat atau pusing"
+                "Jangan menunda jika ada nyeri hebat atau pusing",
+                "Hindari aktivitas fisik"
             ],
             "hospital": [
                 "USG transvaginal",
-                "Pemeriksaan beta-hCG serial",
-                "Evaluasi kemungkinan ruptur"
+                "Beta-hCG serial",
+                "Laparoskopi jika ruptur",
+                "Evaluasi kestabilan hemodinamik"
             ],
             "specialist": "Sp.OG"
         },
-
         "Sepsis": {
             "immediate": [
                 "Segera ke IGD",
-                "Pantau kesadaran dan tanda vital"
+                "Pantau kesadaran dan tanda vital",
+                "Pertahankan hidrasi"
             ],
             "hospital": [
-                "Kultur darah/urin",
-                "Pemberian antibiotik empiris",
-                "Resusitasi cairan"
+                "Kultur darah dan urin",
+                "Antibiotik empiris",
+                "Laktat serial",
+                "Source control infeksi"
             ],
             "specialist": "Sp.PD"
         },
-
+        "Possible Sepsis": {
+            "immediate": [
+                "Segera ke IGD",
+                "Pantau kesadaran dan tanda vital",
+                "Pertahankan hidrasi"
+            ],
+            "hospital": [
+                "Kultur darah dan urin",
+                "Antibiotik empiris",
+                "Laktat serial",
+                "Source control infeksi"
+            ],
+            "specialist": "Sp.PD"
+        },
         "Stroke": {
             "immediate": [
                 "Segera ke IGD",
-                "Catat waktu onset gejala"
+                "Catat waktu onset gejala",
+                "Hindari makan/minum"
             ],
             "hospital": [
                 "CT scan kepala",
-                "Evaluasi trombolisis jika memenuhi kriteria"
+                "Evaluasi trombolisis",
+                "MRI jika indikasi",
+                "Monitor tekanan darah"
             ],
             "specialist": "Sp.S"
         },
-
         "Appendicitis": {
             "immediate": [
                 "Segera ke IGD",
-                "Puasa (hindari makan/minum)"
+                "Puasa (hindari makan/minum)",
+                "Monitor nyeri"
             ],
             "hospital": [
-                "USG/CT abdomen",
-                "Evaluasi tindakan bedah"
+                "USG atau CT abdomen",
+                "Hitung leukosit",
+                "Evaluasi bedah",
+                "Antibiotik jika indikasi"
+            ],
+            "specialist": "Sp.B"
+        },
+        "Cholecystitis": {
+            "immediate": [
+                "Segera ke IGD",
+                "Puasa (hindari makan/minum)",
+                "Hindari makan berlemak"
+            ],
+            "hospital": [
+                "USG abdomen",
+                "Hitung leukosit",
+                "Evaluasi bedah",
+                "Antibiotik jika indikasi"
+            ],
+            "specialist": "Sp.B"
+        },
+        "Perforated Ulcer": {
+            "immediate": [
+                "Segera ke IGD",
+                "Puasa (hindari makan/minum)",
+                "Jangan minum obat nyeri perut"
+            ],
+            "hospital": [
+                "X-ray abdomen berdiri",
+                "CT abdomen",
+                "Evaluasi bedah segera",
+                "Antibiotik IV"
             ],
             "specialist": "Sp.B"
         }
     }
-
+    
     # Default plan for unknown syndromes or critical vital signs
-    return plans.get(syndrome, {
+    return ACTION_PLANS.get(syndrome, {
         "immediate": ["Evaluasi dokter lebih lanjut"],
         "hospital": [],
         "specialist": "Dokter umum"

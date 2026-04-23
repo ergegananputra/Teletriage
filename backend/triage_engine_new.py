@@ -72,11 +72,14 @@ def map_specialist(syndrome: str) -> str:
     specialist_mapping = {
         "ACS": "Cardiology / Sp.JP",
         "Sepsis": "Internal Medicine / Sp.PD", 
+        "Possible Sepsis": "Internal Medicine / Sp.PD",
         "Pulmonary Embolism": "Pulmonology / Sp.P",
         "Ectopic Pregnancy": "OB-GYN / Sp.OG",
         "DKA": "Internal Medicine / Endocrinology",
         "Stroke": "Neurology / Sp.S",
         "Appendicitis": "General Surgery / Sp.B",
+        "Cholecystitis": "General Surgery / Sp.B",
+        "Perforated Ulcer": "General Surgery / Sp.B",
         "Aortic Dissection": "Cardiology / Vascular Surgery",
         "Myocardial Infarction": "Cardiology / ICU"
     }
@@ -132,12 +135,36 @@ def triage_engine(data: Dict[str, Any]) -> TriageResult:
     # Step 4: Process top syndrome
     top_syndrome = syndromes[0]
     
-    # Step 5: Determine triage level based on confidence
-    if top_syndrome.score >= 0.85:
+    # Step 5: Determine triage level with clinical modifiers
+    # Base triage level from syndrome score
+    base_score = top_syndrome.score
+    
+    # Apply vital sign modifiers to prevent overtriage
+    hr = _safe_int(data.get("heart_rate"))
+    bp = str(data.get("blood_pressure", "")).lower()
+    spo2 = _safe_int(data.get("spo2"))
+    
+    # Downgrade modifier: stable vitals for moderate syndromes
+    vital_modifier = 0.0
+    if base_score < 0.90:  # Only for moderate cases
+        if hr and 60 <= hr <= 100 and spo2 and spo2 >= 95:
+            # Normal HR and O2 - downgrade moderate cases
+            vital_modifier = -0.10
+    
+    # Upgrade modifier: abnormal vitals for borderline cases
+    if base_score >= 0.70 and base_score < 0.85:
+        if hr and hr > 110 or (spo2 and spo2 < 92):
+            # Abnormal vitals - upgrade borderline cases
+            vital_modifier = 0.10
+    
+    adjusted_score = max(0.0, min(1.0, base_score + vital_modifier))
+    
+    # Determine triage level with adjusted score
+    if adjusted_score >= 0.90:
         triage_level = "EMERGENCY"
         action = "Immediate ED referral with ambulance"
         ambulance_required = True
-    elif top_syndrome.score >= 0.6:
+    elif adjusted_score >= 0.70:
         triage_level = "URGENT" 
         action = "Same-day specialist referral"
         ambulance_required = False
@@ -175,7 +202,7 @@ def triage_engine(data: Dict[str, Any]) -> TriageResult:
         triage_level=triage_level,
         action=action,
         syndrome=top_syndrome.name,
-        confidence=top_syndrome.score,
+        confidence=adjusted_score,  # Use adjusted score
         reasons=all_reasons,
         specialist=specialist,
         ambulance_required=ambulance_required,
